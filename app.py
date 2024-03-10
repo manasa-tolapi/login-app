@@ -1,111 +1,119 @@
-from flask import Flask, jsonify, request
+from flask import Flask, render_template, request, redirect, url_for, session
 import sqlite3
 
 app = Flask(__name__)
+app.secret_key = 'your_secret_key'
 
-# Database connection details
-db_file = 'your_database.db'
-
-# Route to fetch all users
-@app.route('/get_users', methods=['GET'])
-def get_users():
-    try:
-        # Connect to the SQLite database
-        connection = sqlite3.connect(db_file)
-        cursor = connection.cursor()
-
-        # Execute SQL query to select all columns from the users table
-        cursor.execute("SELECT * FROM users")
-
-        # Fetch all rows
-        users = cursor.fetchall()
-
-        # Close the database connection
-        cursor.close()
-        connection.close()
-
-        # Return data in JSON format
-        return jsonify(users)
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# Route to add a new user
-@app.route('/add_user', methods=['POST'])
-def add_user():
-    try:
-        # Connect to the SQLite database
-        connection = sqlite3.connect(db_file)
-        cursor = connection.cursor()
-
-        # Get user data from the request JSON
-        # user_data = request.get_json()
-        username = request.form.get('username')
-        email = request.form.get('email')
-
-        # Insert user data into the users table
-        cursor.execute("INSERT INTO users (username, email) VALUES (?, ?)", (username, email))
-
-        # Commit changes and close the connection
-        connection.commit()
-        cursor.close()
-        connection.close()
-
-        return jsonify({"message": "User added successfully"}), 201
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@app.route("/")
+def start():
+    if session.get('is_loggedin', False):
+        name = session.get('username', 'User')
+        print(session)
+        return render_template('home.html', name=name)
+    return render_template('login.html')
 
 
-# Route to delete an existing user
-@app.route('/delete_user/<int:user_id>', methods=['GET'])
-def delete_user(user_id):
-    try:
-        # Connect to the SQLite database
-        connection = sqlite3.connect(db_file)
-        cursor = connection.cursor()
-
-        # Delete user from the users table
-        cursor.execute("DELETE FROM users WHERE id=?", (user_id,))
-
-        # Commit changes and close the connection
-        connection.commit()
-        cursor.close()
-        connection.close()
-
-        return jsonify({"message": f"User with ID {user_id} deleted successfully"}), 200
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# @app.route('/home')
+# def home_page():
+#     return render_template('home.html')
+#     # return 'Welcome ' + email
 
 
-# Route to update an existing user
-# @app.route('/update_user/<int:user_id>', methods=['PUT'])
-# def update_user(user_id):
-#     try:
-#         # Connect to the SQLite database
-#         connection = sqlite3.connect(db_file)
-#         cursor = connection.cursor()
+@app.route('/login', methods=["POST", "GET"])
+def login():
+    if request.method == 'POST':
+        email = request.form.get('email', None)
+        password = request.form.get('password', None)
+        if email and password:
+            # check with database values
+            conn = sqlite3.connect('database.db')
+            cursor = conn.cursor()
+            cursor.execute('select id, email, username, password from users where email=? and password=?', (email, password))
+            user = cursor.fetchone()
+            print(user, '...user')
+            if user:
+                session['is_loggedin'] = True
+                session['id'] = user[0]
+                session['username'] = user[2]
+                # return render_template('home.html')
+                return redirect('/')
+                # return redirect(url_for('home_page'))
+            else:
+                print('Either Email or pasword are wrong')
+        else:
+            print('Either Email or pasword are None')
+    return render_template('login.html')
 
-#         # Get user data from the request JSON
-#         user_data = request.get_json()
-#         new_username = user_data.get('username')
-#         new_email = user_data.get('email')
 
-#         # Update user data in the users table
-#         cursor.execute("UPDATE users SET username=?, email=? WHERE id=?", (new_username, new_email, user_id))
+@app.route('/register', methods=["POST", "GET"])
+def register():
+    # print(request.form, type(request.form))
+    if request.method == 'POST':
+        email=request.form.get('email')
+        password=request.form.get('password')
+        username=request.form.get('username')
+        print(email, password, username)
 
-#         # Commit changes and close the connection
-#         connection.commit()
-#         cursor.close()
-#         connection.close()
+        # save user data to database
+        try:
+            conn = sqlite3.connect('database.db')
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO users (username, email, password)
+                VALUES (?, ?, ?)
+            ''', (username, email, password))
+            user_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            print("SQLite error:", e)
 
-#         return jsonify({"message": f"User with ID {user_id} updated successfully"}), 200
+        print('inserted at : ', user_id)
 
-#     except Exception as e:
-#         return jsonify({"error": str(e)}), 500
+        return redirect('/home')
+    return render_template('register.html')
 
 
-if __name__ == '__main__':
-    app.run(debug=True)
+@app.route("/update", methods=["POST", "GET"])
+def update():
+    user_id = session.get('id', None)
+    if user_id:
+        if request.method == "POST":
+            print(request.form)
+            email = request.form.get('email')
+            password = request.form.get('password')
+            username = request.form.get('username')
 
+            conn = sqlite3.connect('database.db')
+            cursor = conn.cursor()
+            cursor.execute('update users set username = ?, email = ?, password = ? where id = ?', (
+                username, email,password, user_id
+            ))
+
+            conn.commit()
+            conn.close()
+
+            return redirect("/")
+
+        conn = sqlite3.connect('database.db')
+        cursor = conn.cursor()
+        cursor.execute('select username, email, password from users where id = ?', (str(user_id)))
+        user = cursor.fetchone()
+
+        conn.commit()
+        conn.close()
+        return render_template('update.html', user_data=user)
+    return 'User not loggedIn'
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect("/login")
+
+
+
+
+# if not using `flask run --debug` : run with `python app.py` & uncomment below code
+# if __name__ == '__main__':
+#     app.run(debug=True)
